@@ -53,7 +53,7 @@ RUN conda install -c conda-forge gcc=${GCC_VERSION} gxx=${GCC_VERSION} cmake=${C
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install pybind11[global] splashsurf genesis-world
+    pip install pybind11[global] genesis-world
 
 # Clone Genesis repository
 WORKDIR /app
