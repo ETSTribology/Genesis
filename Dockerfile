@@ -1,5 +1,5 @@
 # Use a base image with Python 3.9 and CUDA support
-ARG BASE_IMAGE=nvidia/cuda:12.0-base-ubuntu20.04
+ARG BASE_IMAGE=nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu20.04
 FROM ${BASE_IMAGE}
 
 # Set environment variables
@@ -81,9 +81,6 @@ RUN cmake -S . -B build \
     -D ENABLE_SURFACE_RECONSTRUCTION=${ENABLE_SURFACE_RECONSTRUCTION} \
     -D PYTHON_VERSIONS=${PYTHON_VERSION} && \
     cmake --build build -j$(nproc)
-
-# Expose any necessary ports (e.g., for the interactive viewer)
-EXPOSE 8080
 
 # Set the entrypoint
 ENTRYPOINT ["python3"]
