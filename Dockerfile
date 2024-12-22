@@ -15,6 +15,7 @@ ENV PATH="$CONDA_DIR/bin:$PATH:/root/.cargo/bin"
 
 # Install basic dependencies
 RUN apt-get update
+RUN apt-get upgrade
 RUN apt-get install -y build-essential
 RUN apt-get install -y manpages-dev
 RUN apt-get install -y software-properties-common
