@@ -93,9 +93,9 @@ RUN conda clean --all --yes
 RUN pip install --no-cache-dir --upgrade pip
 RUN pip install pillow
 RUN pip install pybind11[global]
-RUN pip install genesis-world
 RUN pip install pyrender
 RUN pip install PyOpenGL==3.1.7
+RUN pip install -e .
 RUN cargo install splashsurf
 
 # Clone Genesis repository
