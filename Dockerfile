@@ -1,5 +1,5 @@
 # Use a base image with Python 3.9 and CUDA support
-ARG BASE_IMAGE=nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu20.04
+ARG BASE_IMAGE=pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
 FROM ${BASE_IMAGE}
 
 # Set environment variables
