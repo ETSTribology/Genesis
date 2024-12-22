@@ -104,9 +104,6 @@ RUN git clone --recursive ${GENESIS_REPO} .
 RUN git submodule update --init --recursive
 RUN pip install --no-cache-dir -e .
 
-# Debugging: List LuisaRender directory contents
-RUN ls -al /app/genesis/ext/LuisaRender
-
 # Apply fixes to Rust code to resolve warnings and potential errors
 WORKDIR /app/genesis/ext/LuisaRender
 
