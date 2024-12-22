@@ -71,6 +71,7 @@ RUN rm -rf /var/lib/apt/lists/*
 
 # Install Rust for SplashSurf
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+RUN cargo install splashsurf
 
 # Install Miniconda (for Conda dependencies)
 RUN curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o Miniconda3.sh
@@ -95,7 +96,6 @@ RUN pip install pillow
 RUN pip install pybind11[global]
 RUN pip install pyrender
 RUN pip install PyOpenGL==3.1.7
-RUN cargo install splashsurf
 
 # Clone Genesis repository
 WORKDIR /app
