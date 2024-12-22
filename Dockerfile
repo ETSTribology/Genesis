@@ -95,7 +95,6 @@ RUN pip install pillow
 RUN pip install pybind11[global]
 RUN pip install pyrender
 RUN pip install PyOpenGL==3.1.7
-RUN pip install -e .
 RUN cargo install splashsurf
 
 # Clone Genesis repository
@@ -103,6 +102,7 @@ WORKDIR /app
 ARG GENESIS_REPO=https://github.com/Genesis-Embodied-AI/Genesis.git
 RUN git clone --recursive ${GENESIS_REPO} .
 RUN git submodule update --init --recursive
+RUN pip install --no-cache-dir -e .
 
 # Debugging: List LuisaRender directory contents
 RUN ls -al /app/genesis/ext/LuisaRender
