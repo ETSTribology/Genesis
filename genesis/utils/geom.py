@@ -10,15 +10,21 @@ import genesis as gs
 
 
 @ti.func
-def ti_transform_quat_by_quat(v, u):
-    # This method transforms quat_v by quat_u
-    # This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
+def ti_quat_mul(u, v):
     terms = v.outer_product(u)
     w = terms[0, 0] - terms[1, 1] - terms[2, 2] - terms[3, 3]
     x = terms[0, 1] + terms[1, 0] - terms[2, 3] + terms[3, 2]
     y = terms[0, 2] + terms[1, 3] + terms[2, 0] - terms[3, 1]
     z = terms[0, 3] - terms[1, 2] + terms[2, 1] + terms[3, 0]
-    return ti.Vector([w, x, y, z]).normalized()
+    return ti.Vector([w, x, y, z])
+
+
+@ti.func
+def ti_transform_quat_by_quat(v, u):
+    # This method transforms quat_v by quat_u
+    # This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
+    vec = ti_quat_mul(u, v)
+    return vec.normalized()
 
 
 @ti.func
@@ -306,10 +312,11 @@ def orthogonals2(a):
 
 
 @ti.func
-def imp_aref(params, pos, vel):
+def imp_aref(params, neg_penetration, vel, pos):
     # The first term in parms is the timeconst parsed from mjcf. However, we don't use it here but use the one passed in, which is 2*substep_dt.
     timeconst, dampratio, dmin, dmax, width, mid, power = params
-    imp_x = ti.abs(pos) / width
+
+    imp_x = ti.abs(neg_penetration) / width
     imp_a = (1.0 / mid ** (power - 1)) * imp_x**power
     imp_b = 1 - (1.0 / (1 - mid) ** (power - 1)) * (1 - imp_x) ** power
     imp_y = imp_a if imp_x < mid else imp_b
@@ -342,6 +349,18 @@ def get_face_norm(v0, v1, v2):
     return face_norm
 
 
+@ti.func
+def ti_quat_mul_axis(q, axis):
+    return ti.Vector(
+        [
+            -q[1] * axis[0] - q[2] * axis[1] - q[3] * axis[2],
+            q[0] * axis[0] + q[2] * axis[2] - q[3] * axis[1],
+            q[0] * axis[1] + q[3] * axis[0] - q[1] * axis[2],
+            q[0] * axis[2] + q[1] * axis[1] - q[2] * axis[0],
+        ]
+    )
+
+
 # ------------------------------------------------------------------------------------
 # -------------------------------- torch and numpy -----------------------------------
 # ------------------------------------------------------------------------------------
@@ -366,11 +385,8 @@ def wxyz_to_xyzw(wxyz):
 def transform_quat_by_quat(v, u):
     if isinstance(v, torch.Tensor) and isinstance(u, torch.Tensor):
         assert v.shape == u.shape, f"{v.shape} != {u.shape}"
-        shape = u.shape
-        u = u.reshape(-1, 4)
-        v = v.reshape(-1, 4)
-        w1, x1, y1, z1 = u[:, 0], u[:, 1], u[:, 2], u[:, 3]
-        w2, x2, y2, z2 = v[:, 0], v[:, 1], v[:, 2], v[:, 3]
+        w1, x1, y1, z1 = u[..., 0], u[..., 1], u[..., 2], u[..., 3]
+        w2, x2, y2, z2 = v[..., 0], v[..., 1], v[..., 2], v[..., 3]
         ww = (z1 + x1) * (x2 + y2)
         yy = (w1 - y1) * (w2 + z2)
         zz = (w1 + y1) * (w2 - z2)
@@ -380,15 +396,12 @@ def transform_quat_by_quat(v, u):
         x = qq - xx + (x1 + w1) * (x2 + w2)
         y = qq - yy + (w1 - x1) * (y2 + z2)
         z = qq - zz + (z1 + y1) * (w2 - x2)
-        quat = torch.stack([w, x, y, z], dim=-1).view(shape)
+        quat = torch.stack([w, x, y, z], dim=-1)
         return quat
     elif isinstance(v, np.ndarray) and isinstance(u, np.ndarray):
         assert v.shape == u.shape, f"{v.shape} != {u.shape}"
-        shape = u.shape
-        u = u.reshape(-1, 4)
-        v = v.reshape(-1, 4)
-        w1, x1, y1, z1 = u[:, 0], u[:, 1], u[:, 2], u[:, 3]
-        w2, x2, y2, z2 = v[:, 0], v[:, 1], v[:, 2], v[:, 3]
+        w1, x1, y1, z1 = u[..., 0], u[..., 1], u[..., 2], u[..., 3]
+        w2, x2, y2, z2 = v[..., 0], v[..., 1], v[..., 2], v[..., 3]
         # This method transforms quat_v by quat_u
         # This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
         ww = (z1 + x1) * (x2 + y2)
@@ -400,7 +413,7 @@ def transform_quat_by_quat(v, u):
         x = qq - xx + (x1 + w1) * (x2 + w2)
         y = qq - yy + (w1 - x1) * (y2 + z2)
         z = qq - zz + (z1 + y1) * (w2 - x2)
-        quat = np.stack([w, x, y, z], axis=-1).reshape(shape)
+        quat = np.stack([w, x, y, z], axis=-1)
         return quat
     else:
         gs.raise_exception(f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(v)=} and {type(u)=}")
@@ -446,9 +459,56 @@ def quat_to_R(quat):
             -1,
         ).reshape(quat.shape[:-1] + (3, 3))
     elif isinstance(quat, np.ndarray):
-        return Rotation.from_quat(wxyz_to_xyzw(quat)).as_matrix().astype(quat.dtype)
+        return Rotation.from_quat(quat, scalar_first=True).as_matrix().astype(quat.dtype)
     else:
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(quat)=}")
+
+
+def R_to_quat(R):
+    if isinstance(R, torch.Tensor):
+        batch = R.shape[:-2]  # Support batch dimension
+        quat_xyzw = torch.zeros((*batch, 4), dtype=R.dtype, device=R.device)
+
+        trace = R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2]
+
+        # Compute quaternion based on the trace of the matrix
+        mask1 = trace > 0
+        mask2 = ~mask1 & (R[..., 0, 0] >= R[..., 1, 1]) & (R[..., 0, 0] >= R[..., 2, 2])
+        mask3 = ~mask1 & ~mask2 & (R[..., 1, 1] >= R[..., 2, 2])
+        mask4 = ~mask1 & ~mask2 & ~mask3
+
+        S = torch.zeros_like(trace)
+
+        S[mask1] = torch.sqrt(trace[mask1] + 1.0) * 2
+        quat_xyzw[mask1, 0] = (R[mask1, 2, 1] - R[mask1, 1, 2]) / S[mask1]
+        quat_xyzw[mask1, 1] = (R[mask1, 0, 2] - R[mask1, 2, 0]) / S[mask1]
+        quat_xyzw[mask1, 2] = (R[mask1, 1, 0] - R[mask1, 0, 1]) / S[mask1]
+        quat_xyzw[mask1, 3] = 0.25 * S[mask1]
+
+        S[mask2] = torch.sqrt(1.0 + R[mask2, 0, 0] - R[mask2, 1, 1] - R[mask2, 2, 2]) * 2
+        quat_xyzw[mask2, 0] = 0.25 * S[mask2]
+        quat_xyzw[mask2, 1] = (R[mask2, 0, 1] + R[mask2, 1, 0]) / S[mask2]
+        quat_xyzw[mask2, 2] = (R[mask2, 0, 2] + R[mask2, 2, 0]) / S[mask2]
+        quat_xyzw[mask2, 3] = (R[mask2, 2, 1] - R[mask2, 1, 2]) / S[mask2]
+
+        S[mask3] = torch.sqrt(1.0 + R[mask3, 1, 1] - R[mask3, 0, 0] - R[mask3, 2, 2]) * 2
+        quat_xyzw[mask3, 0] = (R[mask3, 0, 1] + R[mask3, 1, 0]) / S[mask3]
+        quat_xyzw[mask3, 1] = 0.25 * S[mask3]
+        quat_xyzw[mask3, 2] = (R[mask3, 1, 2] + R[mask3, 2, 1]) / S[mask3]
+        quat_xyzw[mask3, 3] = (R[mask3, 0, 2] - R[mask3, 2, 0]) / S[mask3]
+
+        S[mask4] = torch.sqrt(1.0 + R[mask4, 2, 2] - R[mask4, 0, 0] - R[mask4, 1, 1]) * 2
+        quat_xyzw[mask4, 0] = (R[mask4, 0, 2] + R[mask4, 2, 0]) / S[mask4]
+        quat_xyzw[mask4, 1] = (R[mask4, 1, 2] + R[mask4, 2, 1]) / S[mask4]
+        quat_xyzw[mask4, 2] = 0.25 * S[mask4]
+        quat_xyzw[mask4, 3] = (R[mask4, 1, 0] - R[mask4, 0, 1]) / S[mask4]
+
+        return xyzw_to_wxyz(quat_xyzw)
+    elif isinstance(R, np.ndarray):
+        quat_xyzw = Rotation.from_matrix(R).as_quat().astype(R.dtype)
+        return xyzw_to_wxyz(quat_xyzw)
+    else:
+        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(R)=}")
 
 
 def trans_to_T(trans):
@@ -494,12 +554,12 @@ def trans_quat_to_T(trans, quat):
         T = np.eye(4, dtype=np.result_type(trans, quat))
         if trans.ndim == 1:
             T[:3, 3] = trans
-            T[:3, :3] = Rotation.from_quat(wxyz_to_xyzw(quat)).as_matrix()
+            T[:3, :3] = Rotation.from_quat(quat, scalar_first=True).as_matrix()
         elif trans.ndim == 2:
             assert quat.ndim == 2
             T = np.tile(T, [trans.shape[0], 1, 1])
             T[:, :3, 3] = trans
-            T[:, :3, :3] = Rotation.from_quat(wxyz_to_xyzw(quat)).as_matrix()
+            T[:, :3, :3] = Rotation.from_quat(quat, scalar_first=True).as_matrix()
         else:
             gs.raise_exception(f"ndim expected to be 1 or 2, but got {trans.ndim=}")
         return T
@@ -507,6 +567,33 @@ def trans_quat_to_T(trans, quat):
         gs.raise_exception(
             f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(trans)=} and {type(quat)=}"
         )
+
+
+def T_to_trans_quat(T):
+    if isinstance(T, torch.Tensor):
+        if T.ndim == 2:
+            trans = T[:3, 3]
+            quat = R_to_quat(T[:3, :3])
+        elif T.ndim == 3:
+            trans = T[:, :3, 3]
+            quat = R_to_quat(T[:, :3, :3])
+        else:
+            gs.raise_exception(f"ndim expected to be 2 or 3, but got {T.ndim=}")
+        return trans, quat
+    elif isinstance(T, np.ndarray):
+        if T.ndim == 2:
+            trans = T[:3, 3]
+            quat = Rotation.from_matrix(T[:3, :3]).as_quat()
+            quat = xyzw_to_wxyz(quat)
+        elif T.ndim == 3:
+            trans = T[:, :3, 3]
+            quat = Rotation.from_matrix(T[:, :3, :3]).as_quat()
+            quat = xyzw_to_wxyz(quat)
+        else:
+            gs.raise_exception(f"ndim expected to be 2 or 3, but got {T.ndim=}")
+        return trans, quat
+    else:
+        raise TypeError(f"Input must be a torch.Tensor or np.ndarray. Got: {type(T)}")
 
 
 def trans_R_to_T(trans, R):
@@ -569,20 +656,20 @@ def quat_to_T(quat):
     if isinstance(quat, torch.Tensor):
         T = torch.eye(4, dtype=quat.dtype, device=quat.device)
         if quat.ndim == 1:
-            T[:3, :3] = Rotation.from_quat(wxyz_to_xyzw(quat)).as_matrix()
+            T[:3, :3] = quat_to_R(quat)
         elif quat.ndim == 2:
             T = T.unsqueeze(0).repeat(quat.shape[0], 1, 1)
-            T[:, :3, :3] = Rotation.from_quat(wxyz_to_xyzw(quat)).as_matrix()
+            T[:, :3, :3] = quat_to_R(quat)
         else:
             gs.raise_exception(f"ndim expected to be 1 or 2, but got {quat.ndim=}")
         return T
     elif isinstance(quat, np.ndarray):
         T = np.eye(4, dtype=quat.dtype)
         if quat.ndim == 1:
-            T[:3, :3] = Rotation.from_quat(wxyz_to_xyzw(quat)).as_matrix()
+            T[:3, :3] = Rotation.from_quat(quat, scalar_first=True).as_matrix()
         elif quat.ndim == 2:
             T = np.tile(T, [quat.shape[0], 1, 1])
-            T[:, :3, :3] = Rotation.from_quat(wxyz_to_xyzw(quat)).as_matrix()
+            T[:, :3, :3] = Rotation.from_quat(quat, scalar_first=True).as_matrix()
         else:
             gs.raise_exception(f"ndim expected to be 1 or 2, but got {quat.ndim=}")
         return T
@@ -590,35 +677,55 @@ def quat_to_T(quat):
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(quat)=}")
 
 
-def quat_to_xyz(quat):
+def quat_to_xyz(quat, rpy=False, degrees=False):
     if isinstance(quat, torch.Tensor):
         # Extract quaternion components
         qw, qx, qy, qz = quat.unbind(-1)
+
         # Roll (x-axis rotation)
-        sinr_cosp = 2 * (qw * qx + qy * qz)
+        if rpy:
+            sinr_cosp = 2 * (qw * qx + qy * qz)
+        else:
+            sinr_cosp = -2 * (qy * qz - qw * qx)
         cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
         roll = torch.atan2(sinr_cosp, cosr_cosp)
+
         # Pitch (y-axis rotation)
-        sinp = 2 * (qw * qy - qz * qx)
+        if rpy:
+            sinp = 2 * (qw * qy - qz * qx)
+        else:
+            sinp = 2 * (qx * qz + qw * qy)
         pitch = torch.where(
             torch.abs(sinp) >= 1,
             torch.sign(sinp) * torch.tensor(torch.pi / 2),
             torch.asin(sinp),
         )
+
         # Yaw (z-axis rotation)
-        siny_cosp = 2 * (qw * qz + qx * qy)
+        if rpy:
+            siny_cosp = 2 * (qw * qz + qx * qy)
+        else:
+            siny_cosp = -2 * (qx * qy - qw * qz)
         cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
         yaw = torch.atan2(siny_cosp, cosy_cosp)
-        return torch.stack([roll, pitch, yaw], dim=-1) * 180.0 / torch.tensor(np.pi)
+
+        rpy = torch.stack([roll, pitch, yaw], dim=-1)
+        if degrees:
+            rpy *= 180.0 / torch.pi
+        return rpy
     elif isinstance(quat, np.ndarray):
-        return Rotation.from_quat(wxyz_to_xyzw(quat)).as_euler("xyz", degrees=True)
+        rot = Rotation.from_quat(quat, scalar_first=True)
+        if rpy:
+            return rot.as_euler("xyz", degrees=degrees)
+        return rot.as_euler("zyx", degrees=degrees)[::-1]
     else:
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(quat)=}")
 
 
-def xyz_to_quat(euler_xyz):
+def xyz_to_quat(euler_xyz, rpy=False, degrees=False):
     if isinstance(euler_xyz, torch.Tensor):
-        euler_xyz = euler_xyz * torch.tensor(np.pi) / 180.0
+        if degrees:
+            euler_xyz *= torch.pi / 180.0
         roll, pitch, yaw = euler_xyz.unbind(-1)
         cosr = (roll * 0.5).cos()
         sinr = (roll * 0.5).sin()
@@ -626,42 +733,29 @@ def xyz_to_quat(euler_xyz):
         sinp = (pitch * 0.5).sin()
         cosy = (yaw * 0.5).cos()
         siny = (yaw * 0.5).sin()
-        qw = cosr * cosp * cosy + sinr * sinp * siny
-        qx = sinr * cosp * cosy - cosr * sinp * siny
-        qy = cosr * sinp * cosy + sinr * cosp * siny
-        qz = cosr * cosp * siny - sinr * sinp * cosy
+        sign = 1.0 if rpy else -1.0
+        qw = cosr * cosp * cosy + sign * sinr * sinp * siny
+        qx = sinr * cosp * cosy - sign * cosr * sinp * siny
+        qy = cosr * sinp * cosy + sign * sinr * cosp * siny
+        qz = cosr * cosp * siny - sign * sinr * sinp * cosy
         return torch.stack([qw, qx, qy, qz], dim=-1)
     elif isinstance(euler_xyz, np.ndarray):
-        return xyzw_to_wxyz(Rotation.from_euler("xyz", euler_xyz, degrees=True).as_quat())
+        if rpy:
+            rot = Rotation.from_euler("xyz", euler_xyz, degrees=degrees)
+        else:
+            rot = Rotation.from_euler("zyx", euler_xyz[::-1], degrees=degrees)
+        return rot.as_quat(scalar_first=True)
     else:
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(euler_xyz)=}")
 
 
 def transform_by_quat(v, quat):
     if isinstance(v, torch.Tensor) and isinstance(quat, torch.Tensor):
-        shape = v.shape
-        quat = quat.reshape(-1, 4)
-        v = v.reshape(-1, 3)
-        qvec = quat[:, 1:]
+        qvec = quat[..., 1:]
         t = qvec.cross(v, dim=-1) * 2
-        return v + quat[:, :1] * t + qvec.cross(t, dim=-1)
+        return v + quat[..., :1] * t + qvec.cross(t, dim=-1)
     elif isinstance(v, np.ndarray) and isinstance(quat, np.ndarray):
         return transform_by_R(v, quat_to_R(quat))
-    else:
-        gs.raise_exception(f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(v)=} and {type(quat)=}")
-
-
-def transform_by_quat_yaw(v, quat):
-    if isinstance(v, torch.Tensor) and isinstance(quat, torch.Tensor):
-        quat_yaw = quat.clone().view(-1, 4)
-        quat_yaw[:, 1:3] = 0.0
-        quat_yaw = normalize(quat_yaw)
-        return transform_by_quat(v, quat_yaw)
-    elif isinstance(v, np.ndarray) and isinstance(quat, np.ndarray):
-        quat_yaw = quat.copy().reshape(-1, 4)
-        quat_yaw[:, 1:3] = 0.0
-        quat_yaw = normalize(quat_yaw)
-        return transform_by_quat(v, quat_yaw)
     else:
         gs.raise_exception(f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(v)=} and {type(quat)=}")
 
@@ -727,11 +821,6 @@ def scale_to_T(scale):
 
 def euler_to_R(euler_xyz):
     return Rotation.from_euler("xyz", euler_xyz, degrees=True).as_matrix()
-
-
-def R_to_quat(R):
-    quat_xyzw = Rotation.from_matrix(R).as_quat().astype(R.dtype)
-    return xyzw_to_wxyz(quat_xyzw)
 
 
 def z_up_to_R(z, up=np.array([0, 0, 1])):
@@ -806,11 +895,11 @@ def rotvec_to_R(rotvec):
 
 
 def quat_to_rotvec(quat):
-    return Rotation.from_quat(wxyz_to_xyzw(quat)).as_rotvec()
+    return Rotation.from_quat(quat, scalar_first=True).as_rotvec()
 
 
 def rotvec_to_quat(rotvec):
-    return xyzw_to_wxyz(Rotation.from_rotvec(rotvec).as_quat())
+    return Rotation.from_rotvec(rotvec).as_quat(scalar_first=True)
 
 
 def compute_camera_angle(camera_pos, camera_lookat):

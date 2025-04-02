@@ -1,6 +1,5 @@
-import numpy as np
-
 import genesis as gs
+import numpy as np
 
 ########################## init ##########################
 gs.init(backend=gs.gpu)
@@ -15,7 +14,6 @@ scene = gs.Scene(
     ),
     sim_options=gs.options.SimOptions(
         dt=0.01,
-        substeps=4,  # for more stable grasping contact
     ),
     show_viewer=True,
 )
@@ -65,10 +63,16 @@ path = franka.plan_path(
     qpos_goal=qpos,
     num_waypoints=200,  # 2s duration
 )
+# draw the planned path
+path_debug = scene.draw_debug_path(path, franka)
+
 # execute the planned path
 for waypoint in path:
     franka.control_dofs_position(waypoint)
     scene.step()
+
+# remove the drawn path
+scene.clear_debug_object(path_debug)
 
 # allow robot to reach the last waypoint
 for i in range(100):
@@ -77,9 +81,10 @@ for i in range(100):
 # reach
 qpos = franka.inverse_kinematics(
     link=end_effector,
-    pos=np.array([0.65, 0.0, 0.135]),
+    pos=np.array([0.65, 0.0, 0.130]),
     quat=np.array([0, 1, 0, 0]),
 )
+print(qpos)
 franka.control_dofs_position(qpos[:-2], motors_dof)
 for i in range(100):
     scene.step()
@@ -94,9 +99,10 @@ for i in range(100):
 # lift
 qpos = franka.inverse_kinematics(
     link=end_effector,
-    pos=np.array([0.65, 0.0, 0.3]),
+    pos=np.array([0.65, 0.0, 0.28]),
     quat=np.array([0, 1, 0, 0]),
 )
+print(qpos)
 franka.control_dofs_position(qpos[:-2], motors_dof)
 for i in range(200):
     scene.step()

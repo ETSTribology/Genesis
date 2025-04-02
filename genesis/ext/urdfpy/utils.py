@@ -1,12 +1,12 @@
-"""Utilities for URDF parsing.
-"""
+"""Utilities for URDF parsing."""
 
 import os
-import genesis as gs
+import xml.etree.ElementTree as ET
 
-from lxml import etree as ET
+import trimesh
 import numpy as np
-from genesis.ext import trimesh
+
+import genesis as gs
 
 
 def rpy_to_matrix(coords):
@@ -171,7 +171,7 @@ def unparse_origin(matrix):
 
     Returns
     -------
-    node : :class`lxml.etree.Element`
+    node : :class:`xml.etree.ElementTree.Element`
         An XML node whose tag is ``origin``. The node has two attributes:
 
         - ``xyz`` - A string with three space-delimited floats representing
@@ -252,7 +252,7 @@ def load_meshes(filename):
     if isinstance(meshes, (list, tuple, set)):
         meshes = list(meshes)
         if len(meshes) == 0:
-            raise ValueError("At least one mesh must be pmeshesent in file")
+            raise ValueError("At least one mesh must be present in file")
         for r in meshes:
             if not isinstance(r, trimesh.Trimesh):
                 raise TypeError("Could not load meshes from file")
